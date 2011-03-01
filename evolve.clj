@@ -10,90 +10,78 @@ of Lisp by Conrad Barski."
 
 (defn random-plant [left top width height]
   (let [pos (list (+ left (rand-int width)) (+ top (rand-int height)))]
-    (dosync (ref-set *plants* (conj @*plants* pos)))))
+    (dosync (alter *plants* conj pos))))
 
 (defn add-plants []
   (apply #'random-plant *jungle*)
   (random-plant 0 0 *width* *height*))
 
-(defstruct animal :x :y :energy :dir :genes)
-
 (def *animals*
-  (list (struct animal
-          (round (/ *width* 2)) ; x
-          (round (/ *height* 2)) ; y
-          1000 ; energy
-          0 ; dir
-          (loop [genes [] i 8]
-            (if (zero? i)
-              genes
-              (recur (conj genes (+ 1 (rand-int 10))) (dec i)))))))
+  (list {:x (round (/ *width* 2))
+         :y (round (/ *height* 2))
+         :energy 1000
+         :dir 0
+         :genes (vec (repeatedly 8 #(inc (rand-int 10))))}))
 
-(defn move [orig] ; don't use animal here!
-  (let [dir (:dir orig)
-        x (:x orig)
-        y (:y orig)]
-    (struct animal
-      (mod (+ x
+(defn move [{:keys [x y dir] :as animal}]
+    {:x (mod (+ x
              (cond 
                (and (>= dir 2) (< dir 5)) 1
                (or (= dir 1) (= dir 5)) 0
-               :else -1) ; note clojure has else form and less ()s
-             *width*)
-        *width*) ; x
-      (mod (+ y
+               :else -1)) ; note clojure has else form and less ()s
+        *width*)
+      :y (mod (+ y
              (cond (and (>= dir 0) (< dir 3)) -1
                (and (>= dir 4) (< dir 7)) 1
-               :else 0)
-             *height*)
-        *height*) ; y
-      (dec (:energy orig)) ; energy
-      (:dir orig)
-      (:genes orig)))) ; return new animal rather than change given
+               :else 0))
+        *height*)
+      :energy (dec (:energy animal))
+      :dir (:dir animal)
+      :genes (:genes animal)}) ; return new animal rather than change given
 
-(defn turn [orig]
-  (let [x (rand-int (apply #'+ (:genes orig)))]
-    (defn angle [genes y]
-      (let [xnu (- y (first genes))]
+(defn turn [{:keys [genes dir] :as animal}]
+  (let [x (rand-int (apply #'+ genes))]
+    (defn angle [g y]
+      (let [xnu (- y (first g))]
         (if (< xnu 0)
           0
-          (+ 1 (angle (rest genes) xnu)))))
+          (+ 1 (angle (rest g) xnu)))))
      ; use assoc to return updated animal
-    (assoc orig :dir (mod (+ (:dir orig) (angle (:genes orig) x)) 8))))
+    (assoc animal :dir (mod (+ dir (angle genes x)) 8))))
 
-(defn eat [orig]
-  (let [pos (list (:x orig) (:y orig))]
-    (if (contains? @*plants* pos)
-       ; get rid of the plant first
-      (dosync (ref-set *plants* (disj @*plants* pos))
-         ; so we can return the updated animal
-        (assoc orig :energy (+ (:energy orig) *plant-energy*)))
-      orig)))
+(defn eat [{:keys [x y energy] :as animal}]
+  (let [pos (list x y)]
+    (dosync
+      (if (contains? @*plants* pos)
+        (do
+          ; get rid of the plant first
+          (alter *plants* disj pos)
+          ; so we can return the updated animal
+          (assoc animal :energy (+ energy *plant-energy*)))
+        animal))))
 
 (def *reproduction-energy* 200)
 
 ; we have to do reproduce differently - 
-; return a list with orig animal and any new animal
-(defn reproduce [orig]
-  (let [e (:energy orig)]
-    (if (>= e *reproduction-energy*)
-      (let [mutation (rand-int 8)
-            orig-genes (:genes orig)]
-        (list (assoc orig :energy (floor (/ e 2)))
+; return a list with original animal and any new animal
+(defn reproduce [{:keys [energy genes] :as animal}]
+    (if (>= energy *reproduction-energy*)
+      (let [mutation (rand-int 8)]
+        (list (assoc animal :energy (floor (/ energy 2)))
           (assoc 
-            (assoc orig :genes 
-              (assoc orig-genes mutation 
-                (max 1 (+ (nth orig-genes mutation) (rand-int 3) -1)))) 
-            :energy (floor (/ e 2)))))
-      (list orig))))
+            (assoc animal :genes 
+              (assoc genes mutation 
+                (max 1 (+ (nth genes mutation) (rand-int 3) -1)))) 
+            :energy (floor (/ energy 2)))))
+      (list animal)))
 
 (defn remove-dead [animal-list]
   (remove #(<= (:energy %) 0) animal-list))
 
 (def testanimals (list 
-                   (struct animal 5 5 0 4 [1 2 3 4 5 6 7 8]) 
-                   (struct animal 6 6 100 4 [1 2 3 4 5 6 7 8]) 
-                   (struct animal 7 7 200 4 [1 2 3 4 5 6 7 8])))
+                   {:x 5 :y 5 :energy 0 :dir 4 :genes [1 2 3 4 5 6 7 8]}
+                   {:x 6 :y 6 :energy 100 :dir 4 :genes [1 2 3 4 5 6 7 8]}
+                   {:x 7 :y 7 :energy 200 :dir 4 :genes [1 2 3 4 5 6 7 8]}))
 
 
 (defn update-world [animals]
@@ -133,10 +121,7 @@ of Lisp by Conrad Barski."
         (= line "p") (do (println animals) (evolution animals))
         :else (evolution 
                 (let [x (parseInput line)]
-                  (loop [i 0 state animals]
-                    (if (< i x)
-                      (recur (inc i) (update-world state))
-                      (update-world state)))))))))
+                  (nth (iterate update-world animals) (inc x))))))))
 
 (evolution *animals*)        
 
